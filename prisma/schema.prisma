@@ -1,0 +1,432 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USERS & ORGANIZATIONS
+// ============================================
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String?
+  password           String
+  emailVerified      DateTime?
+  image              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // Relationships
+  organizationMembers OrganizationMember[]
+  sessions           Session[]
+}
+
+model Organization {
+  id                 String    @id @default(cuid())
+  name               String
+  slug               String    @unique
+  logo               String?
+  website            String?
+  phone              String?
+  email              String?
+  address            String?
+  industry           String    // cleaning, plumbing, etc.
+  timezone           String    @default("UTC")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // Relationships
+  members            OrganizationMember[]
+  leads              Lead[]
+  conversations      Conversation[]
+  automations        Automation[]
+  followups          Followup[]
+  bookings           Booking[]
+  services           Service[]
+  faqs               FAQ[]
+  aiSettings         AISettings?
+  integrations       Integration[]
+  notifications      Notification[]
+  subscription       Subscription?
+  analytics          AnalyticsEvent[]
+}
+
+model OrganizationMember {
+  id                 String    @id @default(cuid())
+  userId             String
+  organizationId     String
+  role               String    @default("staff") // owner, admin, staff
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Session {
+  id                 String    @id @default(cuid())
+  sessionToken       String    @unique
+  userId             String
+  expires            DateTime
+  createdAt          DateTime  @default(now())
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// BILLING & SUBSCRIPTIONS
+// ============================================
+
+model Subscription {
+  id                 String    @id @default(cuid())
+  organizationId     String    @unique
+  stripeCustomerId   String    @unique
+  stripeSubscriptionId String?
+  plan               String    @default("free") // free, starter, growth, pro
+  status             String    @default("active") // active, trialing, past_due, canceled, unpaid
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  trialEnd           DateTime?
+  canceledAt         DateTime?
+  cancelAtPeriodEnd  Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payments           Payment[]
+
+  @@index([organizationId])
+  @@index([stripeCustomerId])
+}
+
+model Payment {
+  id                 String    @id @default(cuid())
+  subscriptionId     String
+  stripePaymentIntentId String? @unique
+  amount             Float
+  currency           String    @default("USD")
+  status             String    // succeeded, processing, requires_action, canceled, failed
+  createdAt          DateTime  @default(now())
+
+  subscription       Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([subscriptionId])
+}
+
+// ============================================
+// LEADS & CONVERSATIONS
+// ============================================
+
+model Lead {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  firstName          String
+  lastName           String?
+  email              String?
+  phone              String?
+  source             String    // web, facebook, instagram, call, etc.
+  serviceRequested   String?
+  status             String    @default("new") // new, contacted, engaged, qualified, booked, won, lost
+  leadScore          Int       @default(0) // 0-100
+  estimatedValue     Float?    @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  lastContactedAt    DateTime?
+  nextFollowupAt     DateTime?
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  conversations      Conversation[]
+  followups          Followup[]
+  booking            Booking?
+  notes              LeadNote[]
+  tags               LeadTag[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Conversation {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  leadId             String
+  channel            String    // email, sms, instagram, facebook, chat
+  subject            String?
+  aiEnabled          Boolean   @default(true)
+  aiPersonality      String    @default("professional") // professional, friendly, casual, premium
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead               Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  messages           Message[]
+  aiActivity         AIActivity[]
+
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([channel])
+}
+
+model Message {
+  id                 String    @id @default(cuid())
+  conversationId     String
+  sender             String    // customer, ai, human
+  content            String
+  timestamp          DateTime  @default(now())
+  metadata           Json?     // Additional data like attachments, etc.
+
+  conversation       Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([timestamp])
+}
+
+model AIActivity {
+  id                 String    @id @default(cuid())
+  conversationId     String
+  action             String    // responded, asked_question, qualified, escalated, etc.
+  details            String?
+  confidence         Float?    // 0-1 confidence score
+  createdAt          DateTime  @default(now())
+
+  conversation       Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([createdAt])
+}
+
+model LeadNote {
+  id                 String    @id @default(cuid())
+  leadId             String
+  content            String
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  lead               Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model LeadTag {
+  id                 String    @id @default(cuid())
+  leadId             String
+  tag                String
+  createdAt          DateTime  @default(now())
+
+  lead               Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@unique([leadId, tag])
+}
+
+// ============================================
+// AUTOMATIONS & FOLLOW-UPS
+// ============================================
+
+model Automation {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  name               String
+  description        String?
+  enabled            Boolean   @default(true)
+  trigger            String    // lead_created, no_response_30m, no_response_24h, etc.
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  steps              AutomationStep[]
+
+  @@index([organizationId])
+}
+
+model AutomationStep {
+  id                 String    @id @default(cuid())
+  automationId       String
+  stepNumber         Int
+  action             String    // send_message, wait, check_condition, send_booking_link, etc.
+  details            Json      // Action-specific data
+  condition          String?   // Conditional logic
+  conditionMet       String?   // path if condition is met (next_step_id)
+  conditionNotMet    String?   // path if condition is not met (next_step_id)
+  createdAt          DateTime  @default(now())
+
+  automation         Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId])
+}
+
+model Followup {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  leadId             String
+  sequenceName       String
+  stepNumber         Int
+  timing             String    // immediately, after_30m, after_24h, after_3d, etc.
+  message            String
+  channel            String    @default("email") // email, sms, chat
+  sent               Boolean   @default(false)
+  sentAt             DateTime?
+  createdAt          DateTime  @default(now())
+  scheduledFor       DateTime?
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead               Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([sent])
+  @@index([scheduledFor])
+}
+
+// ============================================
+// SERVICES & PRICING
+// ============================================
+
+model Service {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  name               String
+  description        String?
+  basePrice          Float?    // If null, "Ask for quote"
+  category           String?   // cleaning, plumbing, etc.
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model FAQ {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  question           String
+  answer             String
+  category           String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ============================================
+// BOOKINGS
+// ============================================
+
+model Booking {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  leadId             String    @unique
+  service            String
+  scheduledDate      DateTime
+  scheduledTime      String?
+  status             String    @default("pending") // pending, confirmed, completed, cancelled
+  estimatedValue     Float?
+  notes              String?
+  externalBookingUrl String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  lead               Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+// ============================================
+// AI SETTINGS
+// ============================================
+
+model AISettings {
+  id                 String    @id @default(cuid())
+  organizationId     String    @unique
+  enabled            Boolean   @default(true)
+  personality        String    @default("professional") // professional, friendly, casual, premium
+  responseLength     String    @default("medium") // short, medium, long
+  tone               String    @default("helpful") // helpful, casual, formal
+  customInstructions String?
+  escalationRules    Json?     // Rules for escalating to humans
+  businessHours      Json?     // Monday-Sunday, opening/closing times
+  bookingUrl         String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// INTEGRATIONS
+// ============================================
+
+model Integration {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  type               String    // email, sms, instagram, facebook, stripe, booking_system
+  status             String    @default("disconnected") // connected, disconnected, error
+  credentials        String?   // Encrypted credentials
+  webhookUrl         String?
+  webhookSecret      String?
+  lastSyncedAt       DateTime?
+  errorMessage       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, type])
+  @@index([organizationId])
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+model Notification {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  type               String    // new_lead, hot_lead, booking, human_handoff, ai_error, integration_error, payment_issue
+  title              String
+  message            String
+  read               Boolean   @default(false)
+  actionUrl          String?
+  createdAt          DateTime  @default(now())
+  readAt             DateTime?
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([read])
+  @@index([createdAt])
+}
+
+// ============================================
+// ANALYTICS
+// ============================================
+
+model AnalyticsEvent {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  eventType          String    // lead_created, lead_contacted, lead_qualified, booking_created, conversation_started, etc.
+  metadata           Json?     // Additional context
+  createdAt          DateTime  @default(now())
+
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([eventType])
+  @@index([createdAt])
+}
